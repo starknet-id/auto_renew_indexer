@@ -52,6 +52,7 @@ class Listener(StarkNetIndexer):
         super().__init__()
         self.conf = conf
         self.handle_pending_data = self.handle_data
+        self._last_block_number = None
 
     def check_is_subdomain(self, contract: FieldElement):
         if felt.to_int(contract) == int(self.conf.braavos_contract, 16):
