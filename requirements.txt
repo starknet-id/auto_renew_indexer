@@ -1,0 +1,5 @@
+apibara==0.7.2
+starknet-py
+pymongo
+black
+toml
