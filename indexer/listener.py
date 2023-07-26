@@ -103,6 +103,7 @@ class Listener(StarkNetIndexer):
         # auto renewal contract
         for starknet_id_event in [
             "toggled_renewal",
+            "domain_renewed",
         ]:
             add_filter(self.conf.renewal_contract, starknet_id_event)
 
@@ -133,6 +134,7 @@ class Listener(StarkNetIndexer):
                 "starknet_id_update": self.starknet_id_update,
                 "domain_transfer": self.domain_transfer,
                 "toggled_renewal": self.renewal_on_toggled_renewal,
+                "domain_renewed": self.renewal_on_domain_renewed,
                 "Approval": self.renewal_on_approval,
             }[event_name](info, block, event.from_address, event.data)
 
@@ -351,13 +353,15 @@ class Listener(StarkNetIndexer):
     ):
         domain = decode_felt_to_domain_string(felt.to_int(data[0]))
         renewer_addr = str(felt.to_int(data[1]))
-        value = felt.to_int(data[2]) 
+        limit_price = felt.to_int(data[2])
+        is_renewing = felt.to_int(data[4])
+        last_renewal = felt.to_int(data[5])
 
         existing = False
         existing = await info.storage.find_one_and_update(
             "auto_renewals",
-            {"domain": domain, "renewer_address": renewer_addr, "_chain.valid_to": None},
-            {"$set": {"auto_renewal_enabled": value}},
+            {"domain": domain, "renewer_address": renewer_addr, "limit_price": limit_price, "_chain.valid_to": None},
+            {"$set": {"auto_renewal_enabled": is_renewing, "last_renewal": last_renewal}},
         )
 
         if not existing:
@@ -366,7 +370,9 @@ class Listener(StarkNetIndexer):
                 {
                     "domain": domain,
                     "renewer_address": renewer_addr,
-                    "auto_renewal_enabled": value,
+                    "limit_price": limit_price,
+                    "auto_renewal_enabled": is_renewing,
+                    "last_renewal": last_renewal,
                 },
             )
         print(
@@ -375,18 +381,49 @@ class Listener(StarkNetIndexer):
             renewer_addr,
             "domain:",
             domain,
+            "limit_price:",
+            limit_price,
             "auto_renewal_enabled:",
-            value,
+            is_renewing,
+            "last_renewal:",
+            last_renewal,
+            "timestamp:",
+            block.header.timestamp.ToDatetime(),
+        )
+    
+    async def renewal_on_domain_renewed(
+        self, info: Info, block: Block, _: FieldElement, data: List[FieldElement]
+    ):
+        domain = decode_felt_to_domain_string(felt.to_int(data[0]))
+        renewer_addr = str(felt.to_int(data[1]))
+        limit_price = felt.to_int(data[3])
+        timestamp = felt.to_int(data[5])
+
+        await info.storage.find_one_and_update(
+            "auto_renewals",
+            {"domain": domain, "renewer_address": renewer_addr, "limit_price": limit_price, "_chain.valid_to": None},
+            {"$set": {"last_renewal": timestamp}},
+        )
+
+        print(
+            "- [on_domain_renewed]",
+            "renewer:",
+            renewer_addr,
+            "domain:",
+            domain,
+            "limit_price:",
+            limit_price,
             "timestamp:",
             block.header.timestamp.ToDatetime(),
         )
 
+
     async def renewal_on_approval(
         self, info: Info, block: Block, _: FieldElement, data: List[FieldElement]
     ):
-        renewal_contract = self.conf.renewal_contract
+        renewal_contract = int(self.conf.renewal_contract, 16)
+        spender = felt.to_int(data[1])
         renewer = str(felt.to_int(data[0]))
-        spender = felt.to_hex(data[1])
         allowance = str(felt.to_int(data[2]))
 
         existing = False
