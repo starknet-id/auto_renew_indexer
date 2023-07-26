@@ -353,11 +353,11 @@ class Listener(StarkNetIndexer):
     async def renewal_on_toggled_renewal(
         self, info: Info, block: Block, _: FieldElement, data: List[FieldElement]
     ):
-        domain = decode_felt_to_domain_string(felt.to_int(data[0]))
+        domain = decode_felt_to_domain_string(felt.to_int(data[0])) + ".stark"
         renewer_addr = str(felt.to_int(data[1]))
-        limit_price = felt.to_int(data[2])
-        is_renewing = felt.to_int(data[4])
-        last_renewal = felt.to_int(data[5])
+        limit_price = str(felt.to_int(data[2]))
+        is_renewing = False if felt.to_int(data[4]) == 0 else True
+        last_renewal = str(felt.to_int(data[5]))
 
         existing = False
         existing = await info.storage.find_one_and_update(
@@ -399,7 +399,7 @@ class Listener(StarkNetIndexer):
         domain = decode_felt_to_domain_string(felt.to_int(data[0]))
         renewer_addr = str(felt.to_int(data[1]))
         limit_price = str(from_uint256(data[3], data[4]))
-        timestamp = felt.to_int(data[5])
+        timestamp = str(felt.to_int(data[5]))
 
         await info.storage.find_one_and_update(
             "auto_renewals",
