@@ -46,6 +46,8 @@ def decode_felt_to_domain_string(felt):
 
     return decoded
 
+def from_uint256(low: FieldElement, high: FieldElement) -> int:
+    return felt.to_int(low) + (felt.to_int(high) << 128)
 
 class Listener(StarkNetIndexer):
     def __init__(self, conf) -> None:
@@ -396,7 +398,7 @@ class Listener(StarkNetIndexer):
     ):
         domain = decode_felt_to_domain_string(felt.to_int(data[0]))
         renewer_addr = str(felt.to_int(data[1]))
-        limit_price = felt.to_int(data[3])
+        limit_price = str(from_uint256(data[3], data[4]))
         timestamp = felt.to_int(data[5])
 
         await info.storage.find_one_and_update(
@@ -422,9 +424,9 @@ class Listener(StarkNetIndexer):
         self, info: Info, block: Block, _: FieldElement, data: List[FieldElement]
     ):
         renewal_contract = int(self.conf.renewal_contract, 16)
-        spender = felt.to_int(data[1])
         renewer = str(felt.to_int(data[0]))
-        allowance = str(felt.to_int(data[2]))
+        spender = felt.to_int(data[1])
+        allowance = str(from_uint256(data[2], data[3]))
 
         existing = False
         if spender == renewal_contract:
