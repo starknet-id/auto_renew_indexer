@@ -46,6 +46,8 @@ def decode_felt_to_domain_string(felt):
 
     return decoded
 
+def from_uint256(low: FieldElement, high: FieldElement) -> int:
+    return felt.to_int(low) + (felt.to_int(high) << 128)
 
 class Listener(StarkNetIndexer):
     def __init__(self, conf) -> None:
@@ -103,6 +105,7 @@ class Listener(StarkNetIndexer):
         # auto renewal contract
         for starknet_id_event in [
             "toggled_renewal",
+            "domain_renewed",
         ]:
             add_filter(self.conf.renewal_contract, starknet_id_event)
 
@@ -133,6 +136,7 @@ class Listener(StarkNetIndexer):
                 "starknet_id_update": self.starknet_id_update,
                 "domain_transfer": self.domain_transfer,
                 "toggled_renewal": self.renewal_on_toggled_renewal,
+                "domain_renewed": self.renewal_on_domain_renewed,
                 "Approval": self.renewal_on_approval,
             }[event_name](info, block, event.from_address, event.data)
 
@@ -349,15 +353,17 @@ class Listener(StarkNetIndexer):
     async def renewal_on_toggled_renewal(
         self, info: Info, block: Block, _: FieldElement, data: List[FieldElement]
     ):
-        domain = decode_felt_to_domain_string(felt.to_int(data[0]))
+        domain = decode_felt_to_domain_string(felt.to_int(data[0])) + ".stark"
         renewer_addr = str(felt.to_int(data[1]))
-        value = felt.to_int(data[2]) 
+        limit_price = str(felt.to_int(data[2]))
+        is_renewing = False if felt.to_int(data[4]) == 0 else True
+        last_renewal = str(felt.to_int(data[5]))
 
         existing = False
         existing = await info.storage.find_one_and_update(
             "auto_renewals",
-            {"domain": domain, "renewer_address": renewer_addr, "_chain.valid_to": None},
-            {"$set": {"auto_renewal_enabled": value}},
+            {"domain": domain, "renewer_address": renewer_addr, "limit_price": limit_price, "_chain.valid_to": None},
+            {"$set": {"auto_renewal_enabled": is_renewing, "last_renewal": last_renewal}},
         )
 
         if not existing:
@@ -366,7 +372,9 @@ class Listener(StarkNetIndexer):
                 {
                     "domain": domain,
                     "renewer_address": renewer_addr,
-                    "auto_renewal_enabled": value,
+                    "limit_price": limit_price,
+                    "auto_renewal_enabled": is_renewing,
+                    "last_renewal": last_renewal,
                 },
             )
         print(
@@ -375,19 +383,50 @@ class Listener(StarkNetIndexer):
             renewer_addr,
             "domain:",
             domain,
+            "limit_price:",
+            limit_price,
             "auto_renewal_enabled:",
-            value,
+            is_renewing,
+            "last_renewal:",
+            last_renewal,
+            "timestamp:",
+            block.header.timestamp.ToDatetime(),
+        )
+    
+    async def renewal_on_domain_renewed(
+        self, info: Info, block: Block, _: FieldElement, data: List[FieldElement]
+    ):
+        domain = decode_felt_to_domain_string(felt.to_int(data[0]))
+        renewer_addr = str(felt.to_int(data[1]))
+        limit_price = str(from_uint256(data[3], data[4]))
+        timestamp = str(felt.to_int(data[5]))
+
+        await info.storage.find_one_and_update(
+            "auto_renewals",
+            {"domain": domain, "renewer_address": renewer_addr, "limit_price": limit_price, "_chain.valid_to": None},
+            {"$set": {"last_renewal": timestamp}},
+        )
+
+        print(
+            "- [on_domain_renewed]",
+            "renewer:",
+            renewer_addr,
+            "domain:",
+            domain,
+            "limit_price:",
+            limit_price,
             "timestamp:",
             block.header.timestamp.ToDatetime(),
         )
 
+
     async def renewal_on_approval(
         self, info: Info, block: Block, _: FieldElement, data: List[FieldElement]
     ):
-        renewal_contract = self.conf.renewal_contract
+        renewal_contract = int(self.conf.renewal_contract, 16)
         renewer = str(felt.to_int(data[0]))
-        spender = felt.to_hex(data[1])
-        allowance = str(felt.to_int(data[2]))
+        spender = felt.to_int(data[1])
+        allowance = str(from_uint256(data[2], data[3]))
 
         existing = False
         if spender == renewal_contract:
