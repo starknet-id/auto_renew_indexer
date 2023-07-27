@@ -168,17 +168,17 @@ class Listener(StarkNetIndexer):
             address = data[2]
 
             if domain:
-                    await info.storage.find_one_and_update(
-                        "domains",
-                        {"domain": domain, "_chain.valid_to": None},
-                        {"$set": {"addr": str(felt.to_int(address))}},
-                    )
+                await info.storage.find_one_and_update(
+                    "domains",
+                    {"domain": domain, "_chain.valid_to": None},
+                    {"$set": {"addr": str(felt.to_int(address))}},
+                )
             else:
-                    await info.storage.find_one_and_update(
-                        "domains",
-                        {"domain": domain, "_chain.valid_to": None},
-                        {"$unset": {"addr": None}},
-                    )
+                await info.storage.find_one_and_update(
+                    "domains",
+                    {"domain": domain, "_chain.valid_to": None},
+                    {"$unset": {"addr": None}},
+                )
             print("- [domain2addr]", domain, "->", felt.to_hex(address))
 
     async def addr_to_domain_update(
