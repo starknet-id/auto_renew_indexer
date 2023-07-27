@@ -32,8 +32,6 @@ class TomlConfig(Config):
         self.starknetid_contract = contract["starknetid"]
         self.naming_contract = contract["naming"]
         self.pricing_contract = contract["pricing"]
-        self.braavos_contract = contract["braavos"]
-        self.xplorer_contract = contract["xplorer"]
         self.renewal_contract = contract["renewal"]
         self.erc20_contract = contract["erc20"]
 
