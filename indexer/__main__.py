@@ -7,6 +7,7 @@ from apibara.indexer import IndexerRunner, IndexerRunnerConfiguration
 from config import TomlConfig
 from aiohttp import web
 from pymongo import MongoClient
+import aiohttp_cors
 
 
 async def start_server(conf, events_manager):
@@ -17,6 +18,18 @@ async def start_server(conf, events_manager):
     client = MongoClient(conf.connection_string)
     db = client[conf.indexer_id]
     app['collection'] = db['auto_renewals']
+    cors = aiohttp_cors.setup(
+        app,
+        defaults={
+            "*": aiohttp_cors.ResourceOptions(
+                allow_credentials=True,
+                expose_headers="*",
+                allow_headers="*",
+            )
+        },
+    )
+    for route in list(app.router.routes()):
+        cors.add(route)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, port=conf.server_port).start()

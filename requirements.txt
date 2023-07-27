@@ -3,3 +3,4 @@ starknet-py
 pymongo
 black
 toml
+aiohttp_cors
