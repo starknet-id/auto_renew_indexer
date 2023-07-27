@@ -9,7 +9,6 @@ from aiohttp import web
 from pymongo import MongoClient
 import aiohttp_cors
 
-
 async def start_server(conf, events_manager):
     app = web.Application()
     app.add_routes([web.get('/is_ready', is_ready)])
@@ -32,9 +31,11 @@ async def start_server(conf, events_manager):
         cors.add(route)
     runner = web.AppRunner(app)
     await runner.setup()
-    await web.TCPSite(runner, port=conf.server_port).start()
+    site = web.TCPSite(runner, port=conf.server_port)
+    await site.start()
     stop_event = asyncio.Event()
     await stop_event.wait()
+    return runner
 
 async def main():
     conf = TomlConfig("config.toml", "config.template.toml")
@@ -51,17 +52,21 @@ async def main():
     )
 
     runner_task = asyncio.create_task(runner.run(events_manager, ctx={"network": "starknet-mainnet"}))
-    web_server_task = asyncio.create_task(start_server(conf, events_manager))
+    server_runner = await start_server(conf, events_manager)
+    web_server_task = asyncio.create_task(server_runner.start())
 
     await asyncio.gather(runner_task, web_server_task)
     print("starknetid indexer started")
     print('web_server started')
+    return server_runner
 
 
 if __name__ == "__main__":
     while True:
         try:
-            asyncio.run(main())
+            server_runner = asyncio.run(main())
         except Exception:
             print(traceback.format_exc())
             print("warning: exception detected, restarting")
+            if server_runner is not None:
+                asyncio.run(server_runner.cleanup())
