@@ -1,17 +1,22 @@
 import asyncio
 import traceback
 from endpoints import Endpoints
-from endpoints import is_ready
+from endpoints import is_ready, get_renewal_data
 from listener import Listener
 from apibara.indexer import IndexerRunner, IndexerRunnerConfiguration
 from config import TomlConfig
 from aiohttp import web
+from pymongo import MongoClient
 
 
 async def start_server(conf, events_manager):
     app = web.Application()
     app.add_routes([web.get('/is_ready', is_ready)])
+    app.add_routes([web.get('/get_renewal_data', get_renewal_data)])
     app['endpoint'] = Endpoints(events_manager)
+    client = MongoClient(conf.connection_string)
+    db = client[conf.indexer_id]
+    app['collection'] = db['auto_renewals']
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, port=conf.server_port).start()
