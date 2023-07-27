@@ -55,14 +55,6 @@ class Listener(StarkNetIndexer):
         self.conf = conf
         self.handle_pending_data = self.handle_data
         self._last_block_number = None
-
-    def check_is_subdomain(self, contract: FieldElement):
-        if felt.to_int(contract) == int(self.conf.braavos_contract, 16):
-            return (True, "braavos")
-        elif felt.to_int(contract) == int(self.conf.xplorer_contract, 16):
-            return (True, "xplorer")
-        else:
-            return (False, "")
         
     def on_block(self, block: Block):
         self._last_block_number = block.header.block_number
@@ -169,185 +161,145 @@ class Listener(StarkNetIndexer):
     async def domain_to_addr_update(
         self, info: Info, block: Block, contract: FieldElement, data: List[FieldElement]
     ):
-        (is_subdomain, project) = self.check_is_subdomain(contract)
+        
         arr_len = felt.to_int(data[0])
-        domain = ""
-        for i in range(arr_len):
-            domain += decode_felt_to_domain_string(felt.to_int(data[1 + i])) + "."
-        if domain:
-            if is_subdomain:
-                domain += project + "."
-            domain += "stark"
-        address = data[arr_len + 1]
+        if arr_len == 1:
+            domain = decode_felt_to_domain_string(felt.to_int(data[1])) + ".stark"
+            address = data[2]
 
-        if domain:
-            if is_subdomain:
-                await info.storage.insert_one(
-                    "subdomains",
-                    {
-                        "domain": domain,
-                        "project": project,
-                        "creation_date": block.header.timestamp.ToDatetime(),
-                        "addr": str(felt.to_int(address)),
-                    },
-                )
-            else:
+            if domain:
                 await info.storage.find_one_and_update(
                     "domains",
                     {"domain": domain, "_chain.valid_to": None},
                     {"$set": {"addr": str(felt.to_int(address))}},
                 )
-        else:
-            if is_subdomain:
-                await info.storage.find_one_and_update(
-                    "subdomains",
-                    {"domain": domain, "project": project, "_chain.valid_to": None},
-                    {"$unset": {"addr": None}},
-                )
             else:
                 await info.storage.find_one_and_update(
                     "domains",
                     {"domain": domain, "_chain.valid_to": None},
                     {"$unset": {"addr": None}},
                 )
-        print("- [domain2addr]", domain, "->", felt.to_hex(address))
+            print("- [domain2addr]", domain, "->", felt.to_hex(address))
 
     async def addr_to_domain_update(
         self, info: Info, block: Block, contract: FieldElement, data: List[FieldElement]
     ):
         address = data[0]
         arr_len = felt.to_int(data[1])
-        domain = ""
-        for i in range(arr_len):
-            domain += decode_felt_to_domain_string(felt.to_int(data[2 + i])) + "."
-        if domain:
-            domain += "stark"
+        if arr_len == 1:
+            domain = decode_felt_to_domain_string(felt.to_int(data[2])) + ".stark"
+            str_address = str(felt.to_int(address))
 
-        str_address = str(felt.to_int(address))
-
-        await info.storage.find_one_and_update(
-            "domains",
-            {"rev_addr": str_address, "_chain.valid_to": None},
-            {"$unset": {"rev_addr": None}},
-        )
-        if domain:
-            if domain.endswith(".braavos.stark") or domain.endswith(".xplorer.stark"):
-                await info.storage.find_one_and_update(
-                    "subdomains",
-                    {"domain": domain, "_chain.valid_to": None},
-                    {"$set": {"rev_addr": str_address}},
-                )
-            else:
+            await info.storage.find_one_and_update(
+                "domains",
+                {"rev_addr": str_address, "_chain.valid_to": None},
+                {"$unset": {"rev_addr": None}},
+            )
+            if domain:
                 await info.storage.find_one_and_update(
                     "domains",
                     {"domain": domain, "_chain.valid_to": None},
                     {"$set": {"rev_addr": str_address}},
                 )
-        print("- [addr2domain]", felt.to_hex(address), "->", domain)
+            print("- [addr2domain]", felt.to_hex(address), "->", domain)
 
     async def starknet_id_update(
         self, info: Info, block: Block, contract: FieldElement, data: List[FieldElement]
     ):
         arr_len = felt.to_int(data[0])
-        domain = ""
-        for i in range(arr_len):
-            domain += decode_felt_to_domain_string(felt.to_int(data[1 + i])) + "."
-        if domain:
-            domain += "stark"
-        owner = str(felt.to_int(data[arr_len + 1]))
-        expiry = felt.to_int(data[arr_len + 2])
+        if arr_len == 1:
+            domain = decode_felt_to_domain_string(felt.to_int(data[1])) + ".stark"
+            owner = str(felt.to_int(data[2]))
+            expiry = felt.to_int(data[3])
 
-        # we want to upsert
-        existing = await info.storage.find_one_and_update(
-            "domains",
-            {"domain": domain, "_chain.valid_to": None},
-            {
-                "$set": {
-                    "domain": domain,
-                    "expiry": expiry,
-                    "token_id": owner,
-                }
-            },
-        )
-        if existing is None:
-            await info.storage.insert_one(
+            # we want to upsert
+            existing = await info.storage.find_one_and_update(
                 "domains",
+                {"domain": domain, "_chain.valid_to": None},
                 {
-                    "domain": domain,
-                    "expiry": expiry,
-                    "token_id": owner,
-                    "creation_date": block.header.timestamp.ToDatetime(),
+                    "$set": {
+                        "domain": domain,
+                        "expiry": expiry,
+                        "token_id": owner,
+                    }
                 },
             )
-            print(
-                "- [purchased]",
-                "domain:",
-                domain,
-                "id:",
-                owner,
-            )
-        else:
-            await info.storage.insert_one(
-                "domains_renewals",
-                {
-                    "domain": domain,
-                    "prev_expiry": existing["expiry"],
-                    "new_expiry": expiry,
-                    "renewal_date": block.header.timestamp.ToDatetime(),
-                },
-            )
-            print(
-                "- [renewed]",
-                "domain:",
-                domain,
-                "id:",
-                owner,
-                "time:",
-                (expiry - int(existing["expiry"])) / 86400,
-                "days",
-            )
+            if existing is None:
+                await info.storage.insert_one(
+                    "domains",
+                    {
+                        "domain": domain,
+                        "expiry": expiry,
+                        "token_id": owner,
+                        "creation_date": block.header.timestamp.ToDatetime(),
+                    },
+                )
+                print(
+                    "- [purchased]",
+                    "domain:",
+                    domain,
+                    "id:",
+                    owner,
+                )
+            else:
+                await info.storage.insert_one(
+                    "domains_renewals",
+                    {
+                        "domain": domain,
+                        "prev_expiry": existing["expiry"],
+                        "new_expiry": expiry,
+                        "renewal_date": block.header.timestamp.ToDatetime(),
+                    },
+                )
+                print(
+                    "- [renewed]",
+                    "domain:",
+                    domain,
+                    "id:",
+                    owner,
+                    "time:",
+                    (expiry - int(existing["expiry"])) / 86400,
+                    "days",
+                )
 
     async def domain_transfer(
         self, info: Info, block: Block, contract: FieldElement, data: List[FieldElement]
     ):
         arr_len = felt.to_int(data[0])
-        domain = ""
-        for i in range(arr_len):
-            domain += decode_felt_to_domain_string(felt.to_int(data[1 + i])) + "."
-        if domain:
-            domain += "stark"
-        prev_owner = str(felt.to_int(data[arr_len + 1]))
-        new_owner = str(felt.to_int(data[arr_len + 2]))
+        if arr_len == 1:
+            domain = decode_felt_to_domain_string(felt.to_int(data[1])) + ".stark"
+            prev_owner = str(felt.to_int(data[2]))
+            new_owner = str(felt.to_int(data[3]))
 
-        if prev_owner != "0":
-            await info.storage.find_one_and_update(
-                "domains",
-                {
-                    "domain": domain,
-                    "token_id": prev_owner,
-                    "_chain.valid_to": None,
-                },
-                {"$set": {"token_id": new_owner}},
-            )
-        else:
-            await info.storage.insert_one(
-                "domains",
-                {
-                    "domain": domain,
-                    "addr": "0",
-                    "expiry": None,
-                    "token_id": new_owner,
-                    "creation_date": block.header.timestamp.ToDatetime(),
-                },
-            )
+            if prev_owner != "0":
+                await info.storage.find_one_and_update(
+                    "domains",
+                    {
+                        "domain": domain,
+                        "token_id": prev_owner,
+                        "_chain.valid_to": None,
+                    },
+                    {"$set": {"token_id": new_owner}},
+                )
+            else:
+                await info.storage.insert_one(
+                    "domains",
+                    {
+                        "domain": domain,
+                        "addr": "0",
+                        "expiry": None,
+                        "token_id": new_owner,
+                        "creation_date": block.header.timestamp.ToDatetime(),
+                    },
+                )
 
-        print(
-            "- [domain_transfer]",
-            domain,
-            prev_owner,
-            "->",
-            new_owner,
-        )
+            print(
+                "- [domain_transfer]",
+                domain,
+                prev_owner,
+                "->",
+                new_owner,
+            )
 
 
     async def renewal_on_toggled_renewal(
