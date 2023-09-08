@@ -57,7 +57,8 @@ class Listener(StarkNetIndexer):
         self._last_block_number = None
         
     def on_block(self, block: Block):
-        self._last_block_number = block.header.block_number
+        if block.header.block_number is not None:
+            self._last_block_number = block.header.block_number
         
     @property
     def last_block_number(self):
@@ -96,8 +97,9 @@ class Listener(StarkNetIndexer):
 
         # auto renewal contract
         for starknet_id_event in [
-            "toggled_renewal",
-            "domain_renewed",
+            "EnabledRenewal",
+            "DisabledRenewal",
+            "DomainRenewed",
         ]:
             add_filter(self.conf.renewal_contract, starknet_id_event)
 
@@ -127,13 +129,14 @@ class Listener(StarkNetIndexer):
                 "addr_to_domain_update": self.addr_to_domain_update,
                 "starknet_id_update": self.starknet_id_update,
                 "domain_transfer": self.domain_transfer,
-                "toggled_renewal": self.renewal_on_toggled_renewal,
-                "domain_renewed": self.renewal_on_domain_renewed,
+                "EnabledRenewal": self.renewal_on_enabled_renewal,
+                "DisabledRenewal": self.renewal_on_disabled_renewal,
+                "DomainRenewed": self.renewal_on_domain_renewed,
                 "Approval": self.renewal_on_approval,
-            }[event_name](info, block, event.from_address, event.data)
+            }[event_name](info, block, event.from_address, event.data, event.keys)
 
     async def on_starknet_id_transfer(
-        self, info: Info, block: Block, _: FieldElement, data: List[FieldElement]
+        self, info: Info, block: Block, _: FieldElement, data: List[FieldElement], keys: List[FieldElement]
     ):
         source = str(felt.to_int(data[0]))
         target = str(felt.to_int(data[1]))
@@ -159,7 +162,7 @@ class Listener(StarkNetIndexer):
         print("- [transfer]", token_id, source, "->", target)
 
     async def domain_to_addr_update(
-        self, info: Info, block: Block, contract: FieldElement, data: List[FieldElement]
+        self, info: Info, block: Block, contract: FieldElement, data: List[FieldElement], keys: List[FieldElement]
     ):
         
         arr_len = felt.to_int(data[0])
@@ -182,7 +185,7 @@ class Listener(StarkNetIndexer):
             print("- [domain2addr]", domain, "->", felt.to_hex(address))
 
     async def addr_to_domain_update(
-        self, info: Info, block: Block, contract: FieldElement, data: List[FieldElement]
+        self, info: Info, block: Block, contract: FieldElement, data: List[FieldElement], keys: List[FieldElement]
     ):
         address = data[0]
         arr_len = felt.to_int(data[1])
@@ -204,7 +207,7 @@ class Listener(StarkNetIndexer):
             print("- [addr2domain]", felt.to_hex(address), "->", domain)
 
     async def starknet_id_update(
-        self, info: Info, block: Block, contract: FieldElement, data: List[FieldElement]
+        self, info: Info, block: Block, contract: FieldElement, data: List[FieldElement], keys: List[FieldElement]
     ):
         arr_len = felt.to_int(data[0])
         if arr_len == 1:
@@ -263,7 +266,7 @@ class Listener(StarkNetIndexer):
                 )
 
     async def domain_transfer(
-        self, info: Info, block: Block, contract: FieldElement, data: List[FieldElement]
+        self, info: Info, block: Block, contract: FieldElement, data: List[FieldElement], keys: List[FieldElement]
     ):
         arr_len = felt.to_int(data[0])
         if arr_len == 1:
@@ -302,20 +305,19 @@ class Listener(StarkNetIndexer):
             )
 
 
-    async def renewal_on_toggled_renewal(
-        self, info: Info, block: Block, _: FieldElement, data: List[FieldElement]
+    async def renewal_on_enabled_renewal(
+        self, info: Info, block: Block, _: FieldElement, data: List[FieldElement], keys: List[FieldElement]
     ):
-        domain = decode_felt_to_domain_string(felt.to_int(data[0])) + ".stark"
-        renewer_addr = str(felt.to_int(data[1]))
-        limit_price = str(felt.to_int(data[2]))
-        is_renewing = False if felt.to_int(data[4]) == 0 else True
-        last_renewal = str(felt.to_int(data[5]))
+        domain = decode_felt_to_domain_string(felt.to_int(keys[1])) + ".stark"
+        renewer_addr = str(felt.to_int(data[0]))
+        limit_price = str(felt.to_int(data[1]))
+        meta_hash = str(felt.to_int(data[3]))
 
         existing = False
         existing = await info.storage.find_one_and_update(
             "auto_renewals",
             {"domain": domain, "renewer_address": renewer_addr, "limit_price": limit_price, "_chain.valid_to": None},
-            {"$set": {"auto_renewal_enabled": is_renewing, "last_renewal": last_renewal}},
+            {"$set": {"auto_renewal_enabled": True, "last_renewal": "0", "meta_hash": meta_hash}},
         )
 
         if not existing:
@@ -325,33 +327,70 @@ class Listener(StarkNetIndexer):
                     "domain": domain,
                     "renewer_address": renewer_addr,
                     "limit_price": limit_price,
-                    "auto_renewal_enabled": is_renewing,
-                    "last_renewal": last_renewal,
+                    "auto_renewal_enabled": True,
+                    "last_renewal": "0",
+                    "meta_hash": meta_hash,
                 },
             )
         print(
-            "- [on_toggled_renewal]",
+            "- [on_enabled_renewal]",
             "renewer:",
             renewer_addr,
             "domain:",
             domain,
             "limit_price:",
             limit_price,
-            "auto_renewal_enabled:",
-            is_renewing,
-            "last_renewal:",
-            last_renewal,
+            "meta_hash:",
+            meta_hash,
+            "timestamp:",
+            block.header.timestamp.ToDatetime(),
+        )
+
+    async def renewal_on_disabled_renewal(
+        self, info: Info, block: Block, _: FieldElement, data: List[FieldElement], keys: List[FieldElement]
+    ):
+        domain = decode_felt_to_domain_string(felt.to_int(keys[1])) + ".stark"
+        renewer_addr = str(felt.to_int(data[0]))
+        limit_price = str(felt.to_int(data[1]))
+
+        existing = False
+        existing = await info.storage.find_one_and_update(
+            "auto_renewals",
+            {"domain": domain, "renewer_address": renewer_addr, "limit_price": limit_price, "_chain.valid_to": None},
+            {"$set": {"auto_renewal_enabled": False}},
+        )
+
+        if not existing:
+            await info.storage.insert_one(
+                "auto_renewals",
+                {
+                    "domain": domain,
+                    "renewer_address": renewer_addr,
+                    "limit_price": limit_price,
+                    "auto_renewal_enabled": False,
+                    "last_renewal": "0",
+                    "meta_hash": "",
+                },
+            )
+        print(
+            "- [on_disabled_renewal]",
+            "renewer:",
+            renewer_addr,
+            "domain:",
+            domain,
+            "limit_price:",
+            limit_price,
             "timestamp:",
             block.header.timestamp.ToDatetime(),
         )
     
     async def renewal_on_domain_renewed(
-        self, info: Info, block: Block, _: FieldElement, data: List[FieldElement]
+        self, info: Info, block: Block, _: FieldElement, data: List[FieldElement], keys: List[FieldElement]
     ):
-        domain = decode_felt_to_domain_string(felt.to_int(data[0]))
-        renewer_addr = str(felt.to_int(data[1]))
-        limit_price = str(from_uint256(data[3], data[4]))
-        timestamp = str(felt.to_int(data[5]))
+        domain = decode_felt_to_domain_string(felt.to_int(keys[1]))
+        renewer_addr = str(felt.to_int(data[0]))
+        limit_price = str(from_uint256(data[2], data[3]))
+        timestamp = str(felt.to_int(data[4]))
 
         await info.storage.find_one_and_update(
             "auto_renewals",
@@ -373,7 +412,7 @@ class Listener(StarkNetIndexer):
 
 
     async def renewal_on_approval(
-        self, info: Info, block: Block, _: FieldElement, data: List[FieldElement]
+        self, info: Info, block: Block, _: FieldElement, data: List[FieldElement], keys: List[FieldElement]
     ):
         renewal_contract = int(self.conf.renewal_contract, 16)
         renewer = str(felt.to_int(data[0]))
